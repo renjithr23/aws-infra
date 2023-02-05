@@ -1,0 +1,51 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: This template contains the security groups required by our entire stack.
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  VpcId:
+    Type: String
+    Description: Choose which VPC the security groups should be deployed to
+
+Resources:  
+  
+  JenkinsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Security Group of NAT Instance
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-sg
+
+  # Allowing all outbound access 
+  
+  JenkinsSecurityGroupEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: !Sub ${EnvironmentName}-Outbound from NATInstance
+      GroupId: !Ref JenkinsSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 0
+      ToPort: 65535
+      CidrIp: 0.0.0.0/0 
+
+  JenkinsSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: !Sub ${EnvironmentName}-Inbound from NATInstance
+      GroupId: !Ref JenkinsSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 8081
+      ToPort: 8081
+      CidrIp: 0.0.0.0/0 
+
+      
+Outputs:
+
+  JenkinsSecurityGroup:
+    Description: A reference to the security group for Nat Instances
+    Value: !Ref JenkinsSecurityGroup
+  
+

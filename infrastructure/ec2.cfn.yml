@@ -1,0 +1,305 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation EC2 instances Template.
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+  AvailabilityZone:
+    Description: 'The Availability Zone where the specified instance is launched.
+      For example: us-east-1b'
+    Type: String
+    Default: us-east-1a
+
+  ImageId:
+    Description: The Linux distribution for the AMI to be used for the EC2 instances
+    Type: AWS::EC2::Image::Id
+  InstanceType:
+    Description: Ec2 Instance Type
+    Type: String
+    Default: t2.micro
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  # EC2HostProfile:
+  #   Description: IAM Instance Profile to be attached to the EC2 Host 
+  #   Type: String
+  EC2HostInitProfile:
+    Description: IAM Instance Profile to be attached to the EC2 Host for bootstrap
+    Type: String
+  Monitoring:
+    Description: Choose whether Detailed monitoring is required for this instance
+    Type: String
+    AllowedValues:
+    - 'true'
+    - 'false'
+    Default: 'false'
+    ConstraintDescription: Must be either true or false.
+  SubnetId:
+    Description: Subnet for the EC2 Instance
+    Type: String
+  SecurityGroup:
+    Description: Select the Security Group to use for the EC2 hosts
+    Type: List<AWS::EC2::SecurityGroup::Id>
+  RootVolumeSize:
+    Description: Specify a size in GB for the root EBS volume
+    Type: Number
+    Default: 30
+  RootVolumeType:
+    Description: Specify a size in GB for the root EBS volume
+    Type: String
+    Default: gp2
+    AllowedValues:
+    - gp2
+    - io1
+    - standard
+  RootVolumeDeviceName:
+    Description: Specify the device name required for Root Volume. By default you can use "xvda" and for RHEL 7 CIS Image, only use "sda1"
+    Type: String
+    Default: /dev/xvda
+    AllowedValues:
+    - /dev/xvda
+    - /dev/sda1
+  
+  SourceDestCheck: 
+    Description: Specify whether to disable source and destination checks 
+    Type: String 
+    Default: 'True'
+
+  AddVolumeSize1:
+    Description: Specify a size in GB for the additional EBS Volume 1. Enter 0 if no additional volume required.
+    Type: Number
+    Default: 0
+  AddVolumeType1:
+    Description: Specify the EBS volume Type for additional volume 1. Leave Blank if no additional volume required.
+    Type: String
+    Default: ''
+    AllowedValues:
+    - ''
+    - gp2
+    - io1
+    - sc1
+    - st1
+    - standard
+  AddVolumeSize2:
+    Description: Specify a size in GB for the additional EBS Volume 2. Enter 0 if no additional volume required.
+    Type: Number
+    Default: 0
+  AddVolumeType2:
+    Description: Specify the EBS volume Type for additional volume 2. Leave Blank if no additional volume required.
+    Type: String
+    Default: ''
+    AllowedValues:
+    - ''
+    - gp2
+    - io1
+    - sc1
+    - st1
+    - standard
+  # EC2HostRoleName:
+  #   Description: ECS Host Role Name
+  #   Type: String
+  # TemplateS3Region:
+  #   Type: String
+  # TemplateS3Location:
+  #   Type: String
+
+Conditions:
+  AddVolume1: !And 
+    - !Not
+      - !Equals
+        - !Ref AddVolumeSize1
+        - 0
+    - !Not
+      - !Equals
+        - !Ref AddVolumeType1
+        - ''
+  AddVolume2: !And
+    - !Condition AddVolume1
+    - !Not
+      - !Equals
+        - !Ref AddVolumeSize2
+        - 0
+    - !Not
+      - !Equals
+        - !Ref AddVolumeType2
+        - ''
+
+Resources:
+
+  EC2MainLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub ${EnvironmentName}
+      RetentionInDays: 60
+
+  Ec2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      ImageId: !Ref ImageId
+      IamInstanceProfile: !Ref EC2HostInitProfile
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      Monitoring: !Ref Monitoring
+      SecurityGroupIds: !Ref SecurityGroup
+      SubnetId: !Ref SubnetId
+      SourceDestCheck: !Ref SourceDestCheck
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}  
+      # BlockDeviceMappings:
+      #   - DeviceName: !Ref RootVolumeDeviceName
+      #     Ebs:
+      #       VolumeType: !Ref RootVolumeType
+      #       DeleteOnTermination: true
+      #       VolumeSize: !Ref RootVolumeSize
+      #       Encrypted: true
+
+      UserData: 
+        "Fn::Base64": !Sub |
+          #!/bin/bash
+          CLOUDWATCHGROUP="${EC2MainLogGroup}"
+          # Install updates
+          yum -y update
+          # Install CloudWatch Agent and Systems Manager Agent
+          yum install -y https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+          
+          echo "AMZN"
+          rpm -ivh https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+          yum -y update
+
+          aws configure set region $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone | rev | cut -c 2- | rev)
+
+          # Trigger CloudFormation Init and signal CloudFormation Stack of status to EC2 Instance
+          /opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource Ec2Instance --configsets ec2_setup 
+          /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource Ec2Instance 
+
+          # Install git 
+          sudo yum install git -y
+
+          # Install go
+          sudo yum install golang -y
+
+          #install Jenkins 
+          sudo yum remove java-1.7.0-openjdk
+          sudo yum install java-1.8.0
+
+          sudo yum update ?y
+          sudo wget -O /etc/yum.repos.d/jenkins.repo http://pkg.jenkins-ci.org/redhat/jenkins.repo
+          sudo rpm --import https://pkg.jenkins.io/redhat/jenkins.io.key
+          sudo yum install jenkins -y
+
+          systemctl start jenkins.service
+          systemctl enable jenkins.service
+
+        
+          
+    Metadata:
+            
+      'AWS::CloudFormation::Init':
+        configSets:
+          ec2_setup:
+            - config_cfn
+
+        config_cfn:
+          packages:
+            yum:
+              collectd: []
+          files:
+            /etc/cfn/cfn-hup.conf:
+              mode: "000400"
+              owner: root
+              group: root
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook ]
+                triggers=post.update
+                path=Resources.Ec2Instance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --region ${AWS::Region} --stack ${AWS::StackName} --resource Ec2Instance
+
+          commands:
+            01_enable_cloudwatch_agent:
+              command: !Sub /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c ssm:${EC2CloudWatchParameter} -s                
+            
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/cfn/cfn-hup.conf
+                  - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+                  
+  EC2CloudWatchParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: EC2Cloudwatch
+      Name: !Sub ${EnvironmentName}-Cloudwatch-config
+      Type: String
+      Value: !Sub |
+        {
+          "logs": {
+            "force_flush_interval": 5,
+            "logs_collected": {
+              "files": {
+                "collect_list": [
+                  {
+                    "file_path": "/var/log/messages",
+                    "log_group_name": "${EC2MainLogGroup}",
+                    "log_stream_name": "{instance_id}-messages",
+                    "timestamp_format": "%b %d %H:%M:%S"
+                  }
+                ]
+              }
+            }
+          },
+          "metrics": {
+            "append_dimensions": {
+              "InstanceId": "${!aws:InstanceId}",
+              "InstanceType": "${!aws:InstanceType}"
+            },
+            "metrics_collected": {
+              "collectd": {
+                "metrics_aggregation_interval": 60
+              },
+              "disk": {
+                "measurement": [
+                  {"name": "used_percent", "rename": "DISK_USED_PERCENT", "unit": "Percent"}
+                ],
+                "metrics_collection_interval": 60,
+                "resources": [
+                  "/"
+                ]
+              },
+              "mem": {
+                "measurement": [
+                    {"name": "used_percent", "rename": "MEMORY_USED_PERCENT", "unit": "Percent"}
+                ],
+                "metrics_collection_interval": 60
+              },
+              "statsd": {
+                "metrics_aggregation_interval": 60,
+                "metrics_collection_interval": 10,
+                "service_address": ":8125"
+              }
+            }
+          }
+        }
+
+
+Outputs:
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref Ec2Instance
+  CloudWatchLogs:
+    Value: !Ref EC2MainLogGroup
+    Description: CloudWatch Logs GroupName. Your EC2 Instance logs will be stored here.

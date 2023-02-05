@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  Cloudformation template that craetes an ECS Cluster and service along with roles that give permission to
+  register with load balancer
+
+Parameters:
+
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+
+  
+
+Resources:
+
+  InitVPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: 10.1.0.0/16
+      EnableDnsHostnames: True
+      EnableDnsSupport: True
+      InstanceTenancy: default
+      Tags: 
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-VPC
+  
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: InitVPC
+
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref InitVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref InitVPC
+      CidrBlock: 10.1.10.0/24
+      MapPublicIpOnLaunch: True
+      AvailabilityZone: !Select [ 0, !GetAZs ]    # Get the first AZ in the list       
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-Public-A
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref InitVPC
+      CidrBlock: 10.1.20.0/24
+      MapPublicIpOnLaunch: True
+      AvailabilityZone: !Select [ 1, !GetAZs ]    # Get the second AZ in the list 
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-Public-B
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref InitVPC
+      CidrBlock: 10.1.50.0/24
+      AvailabilityZone: !Select [ 0, !GetAZs ]    # Get the first AZ in the list 
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-Private-A
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref InitVPC
+      CidrBlock: 10.1.60.0/24
+      AvailabilityZone: !Select [ 1, !GetAZs ]    # Get the second AZ in the list 
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-Private-B
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref InitVPC
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-Public-RouterTable
+
+  PublicRoute1:   
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway         # An error will occur if we attempt to build a route table entry to an unattached gateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway  
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref InitVPC
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-Private-RouterTable
+
+
+  PublicSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+      
+
+Outputs:
+
+  PublicSubnets:
+    Description: List of public subnets
+    Value: !Join
+      - "," 
+      - - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
+
+  PrivateSubnets:
+    Description: List of public subnets
+    Value: !Join
+      - "," 
+      - - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  VpcId:
+    Description: Id of the Init VPC
+    Value: !Ref InitVPC
+
+  PrivateRouteTable:
+    Description: A reference to the private route table 
+    Value: !Ref PrivateRouteTable
+  
+
+
+

@@ -1,0 +1,70 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Templates for Cloudformation Init in a new account for setting up a Jenkins Dev Environment. 
+Parameters:
+  
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names.
+    Type: String 
+    Default: renjr-personal
+
+  AMI:
+    Description: The AMI ID
+    Type: AWS::EC2::Image::Id
+    Default: ami-09d3b3274b6c5d4aa
+    
+  TemplateS3Region:
+    Type: String
+    Default: s3
+
+  TemplateS3Location:
+    Type: String
+    Default: renjr-main
+
+# Create this beforehand
+  KeyPairName:
+    Type: String
+    Default: rraws
+
+
+Resources:
+  InitVPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Region}.amazonaws.com/${TemplateS3Location}/infrastructure/vpc.cfn.yml
+      Parameters:
+        EnvironmentName:                           !Ref EnvironmentName
+
+  IAMRole:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Region}.amazonaws.com/${TemplateS3Location}/infrastructure/ec2-role.cfn.yml
+      Parameters:
+        EnvironmentName:                        !Ref EnvironmentName
+        EC2MainLogGroup:                        !Ref EnvironmentName  
+
+  SecurityGroups:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Region}.amazonaws.com/${TemplateS3Location}/infrastructure/security-groups.cfn.yml
+      Parameters:
+        EnvironmentName:                        !Ref EnvironmentName
+        VpcId:                                  !GetAtt InitVPC.Outputs.VpcId
+
+  PersonalServer1:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Region}.amazonaws.com/${TemplateS3Location}/infrastructure/ec2.cfn.yml
+      Parameters:
+        InstanceType:                           t2.micro
+        ImageId:                                !Ref AMI
+        KeyName:                                !Ref KeyPairName
+        RootVolumeSize:                         8
+        EC2HostInitProfile:                     !GetAtt IAMRole.Outputs.EC2HostInitProfile
+        SubnetId:                               !Select
+                                                  - 0
+                                                  - !Split [",", !GetAtt InitVPC.Outputs.PublicSubnets]
+        EnvironmentName:                        !Sub ${EnvironmentName}-Jenkins
+        SecurityGroup:                          !GetAtt SecurityGroups.Outputs.JenkinsSecurityGroup
+
+  
+       

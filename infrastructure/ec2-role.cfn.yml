@@ -1,0 +1,167 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Template to provision IAM Role which will be used by other Stacks'
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  EC2MainLogGroup:
+    Description: Provide the name of the EC2 Cloudwatch Log Group 
+    Type: String
+    
+Resources:
+  # This IAM Role is attached to all of the EC2 hosts. IAM Role with high privileges will be used to run the bootstrap
+  # commands and then downgraded to another IAM role with least privilege.
+
+  InstanceRoleDiscoveryPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub ${EnvironmentName}-Instance-Discovery-Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'ec2:ReplaceIamInstanceProfileAssociation'
+              - 'ec2:DescribeIamInstanceProfileAssociations'
+              - 'iam:ListInstanceProfiles'
+            Resource:
+              - '*'
+            Effect: Allow
+
+  SwapRolePolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub ${EnvironmentName}-Swap-Role-Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action: 'iam:PassRole'
+            Resource: !GetAtt EC2HostRole.Arn
+            Effect: Allow
+
+  CloudWatchLogsPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub ${EnvironmentName}-CloudWatch-Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'logs:CreateLogStream'
+              - 'logs:GetLogEvents'
+              - 'logs:PutLogEvents'
+              - 'logs:DescribeLogGroups'
+              - 'logs:DescribeLogStreams'
+              - 'logs:PutRetentionPolicy'
+              - 'logs:PutMetricFilter'
+              - 'logs:CreateLogGroup'
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${EC2MainLogGroup}:*
+            Effect: Allow
+  
+  SsmParameterPolicy:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: !Sub ${EnvironmentName}-SSM-Parameter-Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'ssm:GetParameter'
+            Resource:
+              - '*'
+            Effect: Allow
+
+  EC2HostInitRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-Init-Role-${AWS::Region}
+      ManagedPolicyArns:
+        - !Ref CloudWatchLogsPolicy
+        - !Ref SwapRolePolicy
+        - !Ref SsmParameterPolicy
+        - !Ref InstanceRoleDiscoveryPolicy
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Effect: Allow
+        Version: 2012-10-17
+      Policies: 
+        - PolicyName: assume-role-policy 
+          PolicyDocument: 
+            Statement:  
+              - 
+                Sid: "AssumeRolePolicy"
+                Effect: Allow
+                Action: 
+                  - "sts:AssumeRole"
+                Resource: "*"
+        - PolicyName: s3-all-access-policy 
+          PolicyDocument: 
+            Statement:  
+              - 
+                Sid: "S3AllAccessPolicy"
+                Effect: Allow
+                Action: 
+                  - "s3:*"
+                Resource: "*"
+
+  
+
+  EC2HostInitProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: !Sub ${EnvironmentName}-Host-Init-Instance-Profile
+      Roles:
+        - !Ref EC2HostInitRole
+      Path: /
+
+  EC2HostRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-Host-Role-${AWS::Region}
+      ManagedPolicyArns:
+        - !Ref CloudWatchLogsPolicy
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Effect: Allow
+        Version: 2012-10-17
+
+  EC2HostProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      InstanceProfileName: !Sub ${EnvironmentName}-Host-Instance-Profile
+      Roles:
+        - !Ref EC2HostRole
+      Path: !Sub '/${AWS::StackId}/ec2-host/'
+
+  
+Outputs:  
+  EC2HostInitRoleARN:
+    Description: A reference to EC2 Host Initial Role
+    Value: !GetAtt EC2HostInitRole.Arn
+
+  EC2HostRoleARN:
+    Description: A reference to EC2 Host Initial Role
+    Value: !GetAtt EC2HostInitRole.Arn
+
+  EC2HostInitProfile:
+    Description: A reference to ECS Host Initial Profile
+    Value: !Ref EC2HostInitProfile
+  
+  EC2HostProfile:
+    Description: A reference to ECS Host Profile
+    Value: !Ref EC2HostProfile
